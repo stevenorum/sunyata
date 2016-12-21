@@ -1,0 +1,53 @@
+{
+    "profile": "default",
+    "regions": "us-east-1",
+    "name":"blogless",
+    "description":"blogless API stack",
+    "lambdas": [
+        {
+            "name":"sunyataBlogless",
+            "runtime":"python2.7",
+            "handler":"lambda_handler.lambda_handler",
+            "file":"lambda_handler.py",
+            "directory":"lambda_handler",
+            "description":"Lambda function for blogless.",
+            "timeout":3,
+            "memory":128,
+            "role":"dynamo-read"
+            }
+        ],
+    "stages": ["alpha"],
+    "paths": [
+        {
+            "path":"/",
+            "function":"blogless",
+            "extra":{}
+        }
+    ],
+    "roles": {
+        "dynamo-read":[
+        {
+            "Effect": "Allow",
+            "Action": "logs:CreateLogGroup",
+            "Resource": { "Fn::Join" : [ ":", [ "arn:aws:logs",{"Ref" : "AWS::Region"},{ "Ref" : "AWS::AccountId" },"*" ] ] }
+        },
+        {
+            "Effect": "Allow",
+            "Action": [
+                "logs:CreateLogStream",
+                "logs:PutLogEvents"
+            ],
+            "Resource": { "Fn::Join" : [ ":", [ "arn:aws:logs",{"Ref" : "AWS::Region"},{ "Ref" : "AWS::AccountId" },"log-group:/aws/lambda/*" ] ] }
+        },
+        {
+            "Effect": "Allow",
+            "Action": [
+                "dynamodb:Describe*",
+                "dynamodb:Get*",
+                "dynamodb:List*"
+            ],
+            "Resource": "*"
+        }
+    ]
+    }
+}
