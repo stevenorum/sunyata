@@ -12,6 +12,9 @@ from upload import upload_lambda
 def strip(s):
     return s.replace(":","").replace("-","").replace(".","")
 
+def strip_for_path(s):
+    return s.replace(":","").replace("-","")
+
 def path_joiner(parent, child):
     if not parent:
         return child
@@ -25,6 +28,18 @@ def get_expanding_list(l, joiner=path_joiner):
         all_lists.append(joint)
         parent = joint
     return all_lists
+
+def get_deployer(filename):
+    with open(filename,"r") as f:
+        api = json.load(f)
+    return SunyataDeployer(api=api)
+
+def get_content_type(path):
+    if path.endswith(".html"):
+        return "text/html"
+    if path.endswith(".css"):
+        return "text/css"
+    return "text/html"
 
 class SunyataDeployer(object):
     cf_infra = {}
@@ -70,6 +85,8 @@ class SunyataDeployer(object):
             self.redeploy_to_stages(self.api["stages"])
 
     def deploy_initial(self):
+        if self._get_stack():
+            raise RuntimeError("Stack already exists!")
         self.clear_analysis()
         self.generate_infra()
         self.combine()
@@ -79,7 +96,10 @@ class SunyataDeployer(object):
         self.combine()
         self._update_stack()
 
-    def redeploy_to_stages(self, stages=[]):
+    def redeploy_to_stages(self, stages=None):
+        if not self._get_stack():
+            raise RuntimeError("Stack doesn't exist!")
+        stages = self.api["stages"] if stages==None else stages
         self._upload_lambda_code()
         self.generate()
         for stage in stages:
@@ -178,9 +198,11 @@ class SunyataDeployer(object):
 
     def _upload_lambda_code(self):
         bucket = self.bucket_name
+        self.lambda_keys = {}
         for function in self.api["lambdas"]:
             key = self.canonical_s3_key(function["name"])
-            upload_lambda(function=function, bucket=bucket, key=key)
+            real_key = upload_lambda(function=function, bucket=bucket, key=key)
+            self.lambda_keys[key] = real_key
 
     def get_current_template_body_from_cf(self):
         return self.canonical_template_body(self._get_template_body_from_cf())
@@ -234,7 +256,7 @@ class SunyataDeployer(object):
             description = function["description"]
             timeout = function["timeout"]
             memory = function["memory"]
-            key = self.canonical_s3_key(function["name"])
+            key = self.lambda_keys[self.canonical_s3_key(function["name"])]
             self.cf_functions[cfname] = cfr.lambda_function(name, runtime, role, handler, description, timeout, memory, bucket, key)
             self.cf_permissions[self.canonical_permissions_name(function["name"])] = cfr.lambda_permission(cfname)
         self.cf_roles["APIGWExecRole"] = cfr.apigateway_role(function_arns)
@@ -245,23 +267,31 @@ class SunyataDeployer(object):
         resourceset = set()
         for path in paths:
             pathobj = dict(path)
+            pathobj["raw_resource"] = path["path"]
             pathobj["resource"] = self.canonical_resource_name(path["path"])
             pathobj["name"] = self.canonical_method_name(pathobj["function"], pathobj["resource"])
             all_elements = get_expanding_list(pathobj["path"].split("/"))
-            for element in [self.canonical_resource_name(e) for e in all_elements]:
-                if element != self.canonical_resource_name("/"):
-                    resourceset.add(element)
+            for e in all_elements:
+                if self.canonical_resource_name(e) != self.canonical_resource_name("/"):
+                    resourceset.add(e)
             methodmap[pathobj["name"]] = pathobj
         for resource in resourceset:
-            parts = self.decanonicalize_resource_name(resource).split("/")
+            parts = resource.split("/")
             path_part = parts[-1]
             parent_name = self.get_resource_id_for_template(self.canonical_resource_name("/".join(parts[:-1])))
-            self.cf_resources[resource] = cfr.resource(path_part, parent_name, self.api_name)
+            self.cf_resources[self.canonical_resource_name(resource)] = cfr.resource(path_part, parent_name, self.api_name)
         for name in methodmap:
             method = methodmap[name]
             function_name = self.canonical_function_name(method["function"])
             resource = self.get_resource_id_for_template(method["resource"])
-            self.cf_methods[name] = cfr.method(function_name, resource, self.api_name, method.get("querystring_params",{}), method.get("extra",{}))
+            content_type = get_content_type(method["raw_resource"])
+            self.cf_methods[name] = cfr.method(
+                function_name=function_name,
+                resource=resource,
+                api_name=self.api_name,
+                content_type=content_type,
+                querystring_params=method.get("querystring_params",{}),
+                extra=method.get("extra",{}))
 
     def generate_deployments(self):
         method_names = self.cf_methods.keys()
@@ -360,13 +390,12 @@ class SunyataDeployer(object):
             description=self.api["description"]
         )
 
-template_file = "simpleapi.json"
-with open(template_file,"r") as f:
-    api = json.load(f)
+#template_file = "simpleapi.json"
+#with open(template_file,"r") as f:
+#    api = json.load(f)
 
-deployer = SunyataDeployer(api, "SunyataTestStack")
-print(deployer.get_deployments_from_cf())
-deployer.deploy()
+#deployer = SunyataDeployer(api, "SunyataTestStack")
+#deployer.deploy()
 #deployer.redeploy_to_stage("alpha")
 #print(deployer.get_current_template_body_from_cf())
-print(deployer.get_url())
+#print(deployer.get_url())

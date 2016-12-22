@@ -1,0 +1,7 @@
+#!/usr/bin/env python
+
+import sunyata.cli
+
+cli = sunyata.cli.CLIDispatcher()
+
+cli.do_stuff()

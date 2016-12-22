@@ -149,7 +149,7 @@ def resource(path_part, parent_name, api_name):
     }
     return resource_template
 
-def method(function_name, resource, api_name, querystring_params={}, extra={}):
+def method(function_name, resource, api_name, content_type="text/html", querystring_params={}, extra={}):
     RequestTemplate = {}
     RequestParameters = {}
     for url_param in querystring_params:
@@ -171,10 +171,10 @@ def method(function_name, resource, api_name, querystring_params={}, extra={}):
                         "IntegrationResponses": [
                             {
                                 "ResponseParameters": {
-                                    "method.response.header.Content-Type": "'text/html'"
+                                    "method.response.header.Content-Type": "'" + content_type + "'"
                                 },
                                 "ResponseTemplates": {
-                                    "text/html": "$input.path('$')"
+                                    content_type: "$input.path('$')"
                                 },
                                 "StatusCode": "200"
                             }
