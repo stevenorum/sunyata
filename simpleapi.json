@@ -1,31 +1,40 @@
 {
     "profile": "default",
     "regions": "us-east-1",
-    "name":"blogless",
-    "description":"blogless API stack",
+    "name":"SunyataTest",
+    "description":"Sunyata-deployed API stack",
+    "stages": ["alpha"],
     "lambdas": [
         {
-            "name":"sunyataBlogless",
+            "name":"SunyataFunction",
             "runtime":"python2.7",
             "handler":"lambda_handler.lambda_handler",
             "file":"lambda_handler.py",
             "directory":"lambda_handler",
-            "description":"Lambda function for blogless.",
+            "description":"Sunyata-deployed lambda function.",
             "timeout":3,
             "memory":128,
-            "role":"dynamo-read"
+            "role":"dynamoRead"
             }
         ],
-    "stages": ["alpha"],
     "paths": [
         {
             "path":"/",
-            "function":"blogless",
-            "extra":{}
+            "function":"SunyataFunction"
+        },
+        {
+            "path":"/sunyata",
+            "function":"SunyataFunction"
+        },
+        {
+            "path":"/sunyata/fancy",
+            "function":"SunyataFunction",
+            "extra":{"path":["/sunyata/fancy"]},
+            "querystring_params":{"id":"identifier"}
         }
     ],
     "roles": {
-        "dynamo-read":[
+        "dynamoRead":[
         {
             "Effect": "Allow",
             "Action": "logs:CreateLogGroup",
