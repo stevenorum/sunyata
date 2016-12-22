@@ -13,6 +13,12 @@ class CLIDispatcher:
         'deploy':{
             'help':'Deploy a new stack.',
             'initial':'d'
+            },
+        'examine':{
+            'help':'Print the CF template that would be generated for this stack.'
+            },
+        'examine_deployed':{
+            'help':'Print the CF template currently in use by this stack.'
             }
         }
 
@@ -26,6 +32,16 @@ class CLIDispatcher:
         deployer.redeploy_to_stages()
         print(deployer.get_url())
 
+    def examine(self, **kwargs):
+        deployer = get_deployer(filename=kwargs["template"])
+        body = deployer.get_template_from_config()
+        print(body)
+
+    def examine_deployed(self, **kwargs):
+        deployer = get_deployer(filename=kwargs["template"])
+        body = deployer.get_template_from_cf()
+        print(body)
+
     def get_argument_parser(self):
         parser = argparse.ArgumentParser(description='Interact with sunyata from the command line.')
         operations = parser.add_mutually_exclusive_group(required=True)
@@ -33,7 +49,7 @@ class CLIDispatcher:
         for operation in self.operation_info.keys():
             op = self.operation_info[operation]
             operation_cli = '--{0}'.format(operation.replace('_','-'))
-            if op['initial']:
+            if op.get('initial', None):
                 operations.add_argument('-{0}'.format(op['initial']), operation_cli, action='store_true', help='Operation: {0}'.format(op['help']))
             else:
                 operations.add_argument(operation_cli, action='store_true', help='Operation: {0}'.format(op['help']))

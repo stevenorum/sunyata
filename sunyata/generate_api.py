@@ -63,20 +63,11 @@ class SunyataDeployer(object):
         self.stack_id = None
         self.resources = None
         self._bucket_name = None
+        self.lambda_functions = {}
+        self.lambda_keys = {}
         boto3.setup_default_session(region_name=self.api.get("region", "us-east-1"), profile_name=self.api.get("profile", "default"))
 
-    @property
-    def stack_name_or_id(self):
-        return self.stack_id if self.stack_id else self.stack_name
-
-    @property
-    def bucket_name(self):
-        self._bucket_name = self._bucket_name if self._bucket_name else self._get_stack_output("LambdaZipBucket")
-        return self._bucket_name
-
-    @property
-    def api_name(self):
-        return self.canonical_api_name(self.api["name"])
+    ##### begin externally-used methods #####
 
     def deploy(self):
         self.generate()
@@ -113,7 +104,31 @@ class SunyataDeployer(object):
         self.generate()
         self.combine()
         self._update_stack()
-        # first, do a deployment with the
+
+    def get_template_from_config(self):
+        self.generate()
+        self.combine()
+        body = self.template
+        return self.canonical_template_body(body)
+
+    def get_template_from_cf(self):
+        body = self._get_template_body_from_cf()
+        return self.canonical_template_body(body)
+
+    ##### end externally-used methods #####
+
+    @property
+    def stack_name_or_id(self):
+        return self.stack_id if self.stack_id else self.stack_name
+
+    @property
+    def bucket_name(self):
+        self._bucket_name = self._bucket_name if self._bucket_name else self._get_stack_output("LambdaZipBucket")
+        return self._bucket_name
+
+    @property
+    def api_name(self):
+        return self.canonical_api_name(self.api["name"])
 
     def get_url(self, stage=None):
         stage = stage if stage else self.api["stages"][0]
@@ -248,11 +263,13 @@ class SunyataDeployer(object):
             self.cf_roles[name] = cfr.lambda_role(permissions)
 
     def generate_functions(self):
+        self.lambda_functions = {}
         bucket = self.bucket_name
         function_arns = []
         for function in self.api["lambdas"]:
             name = function["name"]
             cfname = self.canonical_function_name(name)
+            self.lambda_functions[cfname] = function
             function_arns.append({ "Fn::GetAtt" : [cfname, "Arn"]})
             runtime = function["runtime"]
             role = self.canonical_role_name(function["role"])
@@ -260,7 +277,8 @@ class SunyataDeployer(object):
             description = function["description"]
             timeout = function["timeout"]
             memory = function["memory"]
-            key = self.lambda_keys[self.canonical_s3_key(function["name"])]
+            ckey = self.canonical_s3_key(function["name"])
+            key = self.lambda_keys.get(ckey, ckey)
             self.cf_functions[cfname] = cfr.lambda_function(name, runtime, role, handler, description, timeout, memory, bucket, key)
             self.cf_permissions[self.canonical_permissions_name(function["name"])] = cfr.lambda_permission(cfname)
         self.cf_roles["APIGWExecRole"] = cfr.apigateway_role(function_arns)
@@ -289,13 +307,17 @@ class SunyataDeployer(object):
             function_name = self.canonical_function_name(method["function"])
             resource = self.get_resource_id_for_template(method["resource"])
             content_type = get_content_type(method["raw_resource"])
+            proxy = self.lambda_functions[function_name].get("proxy", False)
+            integration_type = "AWS_PROXY" if proxy else "AWS"
             self.cf_methods[name] = cfr.method(
                 function_name=function_name,
                 resource=resource,
                 api_name=self.api_name,
                 content_type=content_type,
                 querystring_params=method.get("querystring_params",{}),
-                extra=method.get("extra",{}))
+                extra=method.get("extra",{}),
+                integration_type=integration_type
+                )
 
     def generate_deployments(self):
         method_names = self.cf_methods.keys()

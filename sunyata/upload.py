@@ -43,6 +43,6 @@ def upload_lambda(function, bucket, key):
     fileobj = zip_function(function)
     canonical_key = "{name}-lambda.zip".format(name=function["name"])
     full_key = "{key}.{suffix}".format(key=key, suffix=datetime.datetime.now().strftime("%Y-%m-%d-%H%M"))
-    #s3.copy(CopySource={"Bucket":bucket, "Key":key}, Bucket=bucket, Key=backup_key)
     s3.upload_fileobj(Fileobj=fileobj, Bucket=bucket, Key=full_key)
+    s3.copy(CopySource={"Bucket":bucket, "Key":full_key}, Bucket=bucket, Key=key)
     return full_key

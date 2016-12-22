@@ -149,7 +149,7 @@ def resource(path_part, parent_name, api_name):
     }
     return resource_template
 
-def method(function_name, resource, api_name, content_type="text/html", querystring_params={}, extra={}):
+def method(function_name, resource, api_name, content_type="text/html", querystring_params={}, extra={}, integration_type=None):
     RequestTemplate = {}
     RequestParameters = {}
     for url_param in querystring_params:
@@ -199,6 +199,10 @@ def method(function_name, resource, api_name, content_type="text/html", querystr
                     "RestApiId" : {"Ref": api_name}
                 }
             }
+    if integration_type and integration_type != "AWS" and integration_type in ["AWS","HTTP","AWS_PROXY","HTTP_PROXY","MOCK"]:
+        method_template["Properties"]["Integration"]["Type"] = integration_type
+        if integration_type == "AWS_PROXY":
+            del method_template["Properties"]["Integration"]["IntegrationResponses"]
     return method_template
 
 def deployment(api_name, stage_name, method_names, stage_description=None, deployment_description=None):
