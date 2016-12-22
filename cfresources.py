@@ -222,3 +222,14 @@ def deployment(api_name, stage_name, method_names, stage_description=None, deplo
     if deployment_description:
         deployment_template["Properties"]["Description"] = deployment_description
     return deployment_template
+
+def stage(api_name, stage_name, deployment_id, stage_description=None):
+    stage_template = {
+        "Type" : "AWS::ApiGateway::Stage",
+        "Properties" : {
+            "CacheClusterEnabled" : false,
+            "DeploymentId" : deployment_id,
+            "RestApiId" : api_name,
+            "StageName" : stage_name
+        }
+    }

@@ -1,0 +1,2 @@
+-When updates get made, new deployments aren't created.  We need to handle this somehow, so that updates can get deployed without fully recreating the stack.
+--Handled by removing and then re-adding the deployment resource to the template.

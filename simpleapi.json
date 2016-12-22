@@ -31,6 +31,17 @@
             "function":"SunyataFunction",
             "extra":{"path":["/sunyata/fancy"]},
             "querystring_params":{"id":"identifier"}
+        },
+        {
+            "path":"/sunyata/extra/fancy",
+            "function":"SunyataFunction",
+            "extra":{"path":["/sunyata/extra/fancy"]},
+            "querystring_params":{"id":"identifier"}
+        },
+        {
+            "path":"/index.html",
+            "function":"SunyataFunction",
+            "extra":{"path":["/index.html"]}
         }
     ],
     "roles": {

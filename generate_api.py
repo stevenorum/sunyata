@@ -2,6 +2,7 @@
 
 import boto3
 import cfresources as cfr
+import datetime
 import json
 import os
 import string
@@ -9,7 +10,7 @@ import time
 from upload import upload_lambda
 
 def strip(s):
-    return s.replace(":","").replace("-","")
+    return s.replace(":","").replace("-","").replace(".","")
 
 def path_joiner(parent, child):
     if not parent:
@@ -32,6 +33,7 @@ class SunyataDeployer(object):
     cf_functions = {}
     cf_permissions = {}
     cf_deployments = {}
+    cf_stages = {}
     cf_resources = {}
     cf_methods = {}
     cf_outputs = {}
@@ -57,45 +59,48 @@ class SunyataDeployer(object):
     def api_name(self):
         return self.canonical_api_name(self.api["name"])
 
+    def deploy(self):
+        self.generate()
+        self.combine()
+        stack = self._get_stack()
+        create = not stack
+        if create:
+            self.deploy_initial()
+        else:
+            self.redeploy_to_stages(self.api["stages"])
+
     def deploy_initial(self):
         self.clear_analysis()
         self.generate_infra()
         self.combine()
-        self._deploy(create=True, update=False, fail=False)
+        self._create_stack()
         self._upload_lambda_code()
-        self.deploy()
-
-    def deploy(self):
         self.generate()
         self.combine()
-        self._deploy(create=False, update=True, fail=False)
+        self._update_stack()
+
+    def redeploy_to_stages(self, stages=[]):
+        self._upload_lambda_code()
+        self.generate()
+        for stage in stages:
+            self.remove_deployments_for_stage(stage)
+        self.combine()
+        self._update_stack()
+        self.generate()
+        self.combine()
+        self._update_stack()
+        # first, do a deployment with the
 
     def get_url(self, stage=None):
         stage = stage if stage else self.api["stages"][0]
         return self._get_stack_output("BaseApiUrl") + "/" + stage
 
-    def _deploy(self, create=False, update=True, fail=True):
-        if not self.template:
-            print("No CF template found.  Perhaps you haven't yet called SunyataDeployer.combine(), or you've called SunyataDeployer.clear_analysis() since the last combine call?")
-            raise RuntimeError("CF template not found.")
-        #print(json.dumps(self.template, indent=2, sort_keys=True))
-        stack = self._get_stack()
-        if create:
-            if stack:
-                pass
-            else:
-                self._create_stack()
-        else:
-            if fail and not stack:
-                raise RuntimeError("Stack doesn't exist and create is false.")
-        if update:
-            if not stack:
-                pass
-            else:
-                self._update_stack()
-        else:
-            if fail and stack:
-                raise RuntimeError("Stack exists and update is false.")
+    def check_template(self, template_body):
+        try:
+            boto3.client("cloudformation").validate_template(TemplateBody=template_body)
+        except Exception as e:
+            print(self.canonical_template_body(template_body))
+            raise e
 
     def _create_stack(self):
         stack = self._get_stack()
@@ -104,6 +109,7 @@ class SunyataDeployer(object):
             return
         cf = boto3.client("cloudformation")
         template_body = self.compact_template_body(self.template)
+        self.check_template(template_body)
         response = cf.create_stack(
             StackName=self.stack_name,
             TemplateBody=template_body,
@@ -125,6 +131,7 @@ class SunyataDeployer(object):
         if canonical_old_template == canonical_new_template:
             print("No update necessary.")
             return
+        self.check_template(template_body)
         response = cf.update_stack(
             StackName=self.stack_name_or_id,
             TemplateBody=template_body,
@@ -145,6 +152,19 @@ class SunyataDeployer(object):
         except Exception as e:
             pass
         return None
+
+    def get_logical_resource_from_cf(self, logical_name):
+        resources = boto3.client("cloudformation").describe_stack_resources(StackName=self.stack_name_or_id)["StackResources"]
+        resources = [r for r in resources if r["LogicalResourceId"] == logical_name]
+        if resources:
+            return resources[0]
+        else:
+            return None
+
+    def get_deployments_from_cf(self):
+        resources = boto3.client("cloudformation").describe_stack_resources(StackName=self.stack_name_or_id)["StackResources"]
+        deployments = [r for r in resources if r["ResourceType"]=="AWS::ApiGateway::Deployment"]
+        return deployments
 
     def _get_template_body_from_cf(self):
         return boto3.client("cloudformation").get_template(StackName=self.stack_name_or_id)["TemplateBody"]
@@ -247,8 +267,21 @@ class SunyataDeployer(object):
         method_names = self.cf_methods.keys()
         api_name = self.api_name
         stages = self.api.get("stages", ["alpha"])
+        trigger = datetime.datetime.now().strftime("%Y%m%d%H%M")
         for stage in stages:
+            name = self.canonical_deployment_name(stage)
+            existing_deployment = self.get_logical_resource_from_cf(name)
+            #if existing_deployment:
+            #    deployment = cfr.deployment(api_name, stage, method_names)
+            #    self.cf_stages[self.canonical_stage_name(stage)] = cfr.stage(api_name, stage, existing_deployment["PhysicalResourceId"])
+            #    pass
+            #else:
             self.cf_deployments[self.canonical_deployment_name(stage)] = cfr.deployment(api_name, stage, method_names)
+
+    def remove_deployments_for_stage(self, stage):
+        deployment = self.canonical_deployment_name(stage)
+        self.cf_deployments[deployment] = {}
+        del self.cf_deployments[deployment]
 
     def get_resource_id_for_template(self, resource_name):
         if resource_name == "rootResource":
@@ -258,6 +291,9 @@ class SunyataDeployer(object):
 
     def canonical_deployment_name(self, stage):
         return "{stage}Deployment".format(stage=strip(stage))
+
+    def canonical_stage_name(self, stage):
+        return "{stage}Stage".format(stage=strip(stage))
 
     def canonical_method_name(self, function, resource):
         return "{function}{resource}Method".format(function=strip(function), resource=strip(resource))
@@ -273,7 +309,7 @@ class SunyataDeployer(object):
             path = path.replace("/" + c, c.upper())
         if not path:
             return "rootResource"
-        return path + "Resource"
+        return strip(path + "Resource")
 
     def decanonicalize_resource_name(self, name):
         if name == "rootResource":
@@ -313,6 +349,7 @@ class SunyataDeployer(object):
         self.resources.update(self.cf_methods)
         self.resources.update(self.cf_resources)
         self.resources.update(self.cf_deployments)
+        self.resources.update(self.cf_stages)
         self.resources.update(self.cf_permissions)
         self.resources.update(self.cf_functions)
         self.resources.update(self.cf_roles)
@@ -328,6 +365,8 @@ with open(template_file,"r") as f:
     api = json.load(f)
 
 deployer = SunyataDeployer(api, "SunyataTestStack")
-deployer.deploy_initial()
-print(deployer.get_current_template_body_from_cf())
+print(deployer.get_deployments_from_cf())
+deployer.deploy()
+#deployer.redeploy_to_stage("alpha")
+#print(deployer.get_current_template_body_from_cf())
 print(deployer.get_url())
