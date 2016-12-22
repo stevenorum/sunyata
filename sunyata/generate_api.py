@@ -10,7 +10,11 @@ import time
 from upload import upload_lambda
 
 def strip(s):
-    return s.replace(":","").replace("-","").replace(".","")
+    new_s = ""
+    for c in s:
+        if c in string.ascii_letters:
+            new_s += c
+    return new_s
 
 def strip_for_path(s):
     return s.replace(":","").replace("-","")
