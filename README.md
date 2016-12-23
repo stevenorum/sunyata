@@ -1,2 +1,2 @@
 # sunyata
-API deployment tools
+Lambda/APIGateway deployment tools.
