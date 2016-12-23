@@ -2,3 +2,6 @@
 --Handled by removing and then re-adding the deployment resource to the template.
 
 -Look into http://docs.aws.amazon.com/apigateway/latest/developerguide/api-gateway-create-api-as-simple-proxy-for-lambda.html to improve how stuff gets passed to the backing lambda functions.  Important part is to make sure that the return value gets interpreted as the correct content-type.
+--Can now pass as direct proxy.
+
+-Figure out how to also support other restful methods, not just get, while still keeping things simple.
