@@ -1,0 +1,28 @@
+version: 0.1
+
+environment_variables:
+  plaintext:
+    key: "value"
+    key2: "value2"
+
+phases:
+  install:
+    commands:
+      - echo "Starting install step."
+      - pip install -U pip setuptools twine wheel
+  pre_build:
+    commands:
+      - echo "Starting pre_build step."
+      - echo "Not running any commands during pre_build."
+  build:
+    commands:
+      - echo "Starting build step."
+      - python setup.py bdist_wheel
+  post_build:
+    commands:
+      - echo "Starting post_build step."
+      - echo "Not running any commands during post_build."
+artifacts:
+  files:
+    - dist/sunyata-*.whl
+  discard-paths: yes
