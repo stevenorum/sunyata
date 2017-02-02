@@ -238,6 +238,7 @@ class SunyataDeployer(object):
         configuration["static_file_url"] = self.static_s3_path
         configuration["static_file_list"] = self.static_files
         configuration["static_file_bucket"] = self.static_bucket_name
+        configuration["base_url"] = self.api.get("domain_name", self.get_url())
         return self.api["config_path"], configuration
 
     def _upload_static_files(self):
