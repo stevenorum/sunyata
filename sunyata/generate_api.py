@@ -7,7 +7,7 @@ import json
 import os
 import string
 import time
-from upload import upload_lambda
+from upload import upload_lambda, upload_static
 
 def strip(s):
     new_s = ""
@@ -55,6 +55,7 @@ class SunyataDeployer(object):
     cf_stages = {}
     cf_resources = {}
     cf_methods = {}
+    cf_models = {}
     cf_outputs = {}
 
     def __init__(self, api, stack_name=None):
@@ -63,8 +64,11 @@ class SunyataDeployer(object):
         self.stack_id = None
         self.resources = None
         self._bucket_name = None
+        self._static_bucket_name = None
+        self._static_url = None
         self.lambda_functions = {}
         self.lambda_keys = {}
+        self.static_files = []
         boto3.setup_default_session(region_name=self.api.get("region", "us-east-1"), profile_name=self.api.get("profile", "default"))
 
     ##### begin externally-used methods #####
@@ -86,6 +90,7 @@ class SunyataDeployer(object):
         self.generate_infra()
         self.combine()
         self._create_stack()
+        self._upload_static_files()
         self._upload_lambda_code()
         self.generate()
         self.combine()
@@ -95,6 +100,7 @@ class SunyataDeployer(object):
         if not self._get_stack():
             raise RuntimeError("Stack doesn't exist!")
         stages = self.api["stages"] if stages==None else stages
+        self._upload_static_files()
         self._upload_lambda_code()
         self.generate()
         for stage in stages:
@@ -122,9 +128,19 @@ class SunyataDeployer(object):
         return self.stack_id if self.stack_id else self.stack_name
 
     @property
-    def bucket_name(self):
+    def lambda_bucket_name(self):
         self._bucket_name = self._bucket_name if self._bucket_name else self._get_stack_output("LambdaZipBucket")
         return self._bucket_name
+
+    @property
+    def static_bucket_name(self):
+        self._static_bucket_name = self._static_bucket_name if self._static_bucket_name else self._get_stack_output("StaticFileBucket")
+        return self._static_bucket_name
+
+    @property
+    def static_s3_path(self):
+        self._static_url = self._static_url if self._static_url else self._get_stack_output("StaticURL")
+        return self._static_url
 
     @property
     def api_name(self):
@@ -215,12 +231,26 @@ class SunyataDeployer(object):
             return matching[0]
         return None
 
+    def _get_config(self):
+        if not self.api.get("config_path", None):
+            return None, {}
+        configuration = {}
+        configuration["static_file_url"] = self.static_s3_path
+        configuration["static_file_list"] = self.static_files
+        configuration["static_file_bucket"] = self.static_bucket_name
+        return self.api["config_path"], configuration
+
+    def _upload_static_files(self):
+        for directory in self.api.get("static_dirs",[]):
+            self.static_files += upload_static(bucket=self.static_bucket_name, directory=directory)
+
     def _upload_lambda_code(self):
-        bucket = self.bucket_name
+        bucket = self.lambda_bucket_name
         self.lambda_keys = {}
+        config_path, config = self._get_config()
         for function in self.api["lambdas"]:
             key = self.canonical_s3_key(function["name"])
-            real_key = upload_lambda(function=function, bucket=bucket, key=key)
+            real_key = upload_lambda(function=function, bucket=bucket, key=key, config_path=config_path, config=config)
             self.lambda_keys[key] = real_key
 
     def get_current_template_body_from_cf(self):
@@ -235,6 +265,7 @@ class SunyataDeployer(object):
         self.cf_deployments = {}
         self.cf_resources = {}
         self.cf_methods = {}
+        self.cf_models = {}
         self.resources = None
         self.template = None
 
@@ -244,17 +275,24 @@ class SunyataDeployer(object):
         self.generate_apis()
         self.generate_roles()
         self.generate_functions()
+        self.generate_models()
         self.generate_resources_and_methods()
         self.generate_deployments()
 
     def generate_infra(self):
         self.cf_infra["LambdaZipBucket"] = cfr.bucket()
         self.cf_outputs["LambdaZipBucket"] = {"Value" : {"Ref" : "LambdaZipBucket"}}
+        if self.api.get("static_dirs", None):
+            self.cf_infra["StaticFileBucket"] = cfr.bucket(website=True)
+            self.cf_infra["StaticFileBucketPolicy"] = cfr.public_bucket_policy("StaticFileBucket")
+            self.cf_outputs["StaticURL"] = {"Value" : {"Fn::GetAtt":["StaticFileBucket","WebsiteURL"]}}
+            self.cf_outputs["StaticFileBucket"] = {"Value" : {"Ref" : "StaticFileBucket"}}
 
     def generate_apis(self):
         api_name = self.api_name
-        self.cf_apis[api_name] = cfr.api(api_name)
-        self.cf_outputs["BaseApiUrl"] = {"Value" : { "Fn::Join" : [ "", [ "https://",{"Ref" : api_name},".execute-api.",{"Ref" : "AWS::Region"},".amazonaws.com"] ] }}
+        if self.api.get("stages", None):
+            self.cf_apis[api_name] = cfr.api(api_name)
+            self.cf_outputs["BaseApiUrl"] = {"Value" : { "Fn::Join" : [ "", [ "https://",{"Ref" : api_name},".execute-api.",{"Ref" : "AWS::Region"},".amazonaws.com"] ] }}
 
     def generate_roles(self):
         for raw_name in self.api["roles"]:
@@ -264,7 +302,7 @@ class SunyataDeployer(object):
 
     def generate_functions(self):
         self.lambda_functions = {}
-        bucket = self.bucket_name
+        bucket = self.lambda_bucket_name
         function_arns = []
         for function in self.api["lambdas"]:
             name = function["name"]
@@ -281,7 +319,15 @@ class SunyataDeployer(object):
             key = self.lambda_keys.get(ckey, ckey)
             self.cf_functions[cfname] = cfr.lambda_function(name, runtime, role, handler, description, timeout, memory, bucket, key)
             self.cf_permissions[self.canonical_permissions_name(function["name"])] = cfr.lambda_permission(cfname)
-        self.cf_roles["APIGWExecRole"] = cfr.apigateway_role(function_arns)
+        if self.api.get("stages", None):
+            self.cf_roles["APIGWExecRole"] = cfr.apigateway_role(function_arns)
+
+    def generate_models(self):
+        models = self.api.get("models", {})
+        for model_name in models:
+            name = self.canonical_model_name(model_name)
+            model = models[model_name]
+            self.cf_models[name] = cfr.model(api_name=self.api_name, model_name=name, model=model)
 
     def generate_resources_and_methods(self):
         paths = self.api["paths"]
@@ -291,7 +337,7 @@ class SunyataDeployer(object):
             pathobj = dict(path)
             pathobj["raw_resource"] = path["path"]
             pathobj["resource"] = self.canonical_resource_name(path["path"])
-            pathobj["name"] = self.canonical_method_name(pathobj["function"], pathobj["resource"])
+            pathobj["name"] = self.canonical_method_name(pathobj["function"], pathobj["resource"], pathobj.get("http_method","GET"))
             all_elements = get_expanding_list(pathobj["path"].split("/"))
             for e in all_elements:
                 if self.canonical_resource_name(e) != self.canonical_resource_name("/"):
@@ -309,6 +355,8 @@ class SunyataDeployer(object):
             content_type = get_content_type(method["raw_resource"])
             proxy = self.lambda_functions[function_name].get("proxy", False)
             integration_type = "AWS_PROXY" if proxy else "AWS"
+            http_method = method.get("http_method","GET")
+            enable_cors = method.get("enable_cors", False)
             self.cf_methods[name] = cfr.method(
                 function_name=function_name,
                 resource=resource,
@@ -316,13 +364,18 @@ class SunyataDeployer(object):
                 content_type=content_type,
                 querystring_params=method.get("querystring_params",{}),
                 extra=method.get("extra",{}),
-                integration_type=integration_type
+                integration_type=integration_type,
+                http_method=http_method,
+                enable_cors=enable_cors,
+                model=self.canonical_model_name(method.get("model")) if method.get("model", None) else None
                 )
+            if enable_cors:
+                self.cf_methods[name + "cors"] = cfr.cors_enabling_method(resource=resource, api_name=self.api_name)
 
     def generate_deployments(self):
         method_names = self.cf_methods.keys()
         api_name = self.api_name
-        stages = self.api.get("stages", ["alpha"])
+        stages = self.api.get("stages", [])
         trigger = datetime.datetime.now().strftime("%Y%m%d%H%M")
         for stage in stages:
             name = self.canonical_deployment_name(stage)
@@ -351,8 +404,8 @@ class SunyataDeployer(object):
     def canonical_stage_name(self, stage):
         return "{stage}Stage".format(stage=strip(stage))
 
-    def canonical_method_name(self, function, resource):
-        return "{function}{resource}Method".format(function=strip(function), resource=strip(resource))
+    def canonical_method_name(self, function, resource, http_method):
+        return "{function}{resource}{http_method}Method".format(function=strip(function), resource=strip(resource), http_method=strip(http_method))
 
     def canonical_resource_name(self, path):
         # Remove the forward slashes but have every character following one be capitalized.
@@ -387,6 +440,9 @@ class SunyataDeployer(object):
     def canonical_api_name(self, name):
         return "{name}API".format(name=strip(name))
 
+    def canonical_model_name(self, name):
+        return "{name}Model".format(name=strip(name))
+
     def canonical_s3_key(self, name):
         return "{name}-lambda-code.zip".format(name=name)
 
@@ -403,6 +459,7 @@ class SunyataDeployer(object):
     def combine(self):
         self.resources = self.cf_apis.copy()
         self.resources.update(self.cf_methods)
+        self.resources.update(self.cf_models)
         self.resources.update(self.cf_resources)
         self.resources.update(self.cf_deployments)
         self.resources.update(self.cf_stages)

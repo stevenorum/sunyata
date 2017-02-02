@@ -7,14 +7,39 @@ false = False
 true = True
 null = None
 
-def bucket(name=None):
+def bucket(name=None, website=False):
     bucket_template = {
         "Type" : "AWS::S3::Bucket",
         "Properties" : {}
     }
     if name:
         bucket_template["Properties"]["BucketName"] = name
+    if website:
+        bucket_template["Properties"]["WebsiteConfiguration"] = {
+            "IndexDocument" : "index.html"
+            }
     return bucket_template
+
+def public_bucket_policy(target, name=None):
+    policy_template = {
+        "Type" : "AWS::S3::BucketPolicy",
+        "Properties" : {
+            "Bucket" : {"Ref": target},
+            "PolicyDocument" : {
+                "Version": "2012-10-17",
+                "Statement": [
+                    {
+                        "Sid": "AddPerm",
+                        "Effect": "Allow",
+                        "Principal": "*",
+                        "Action": "s3:GetObject",
+                        "Resource": {"Fn::Join": [ "", ["arn:aws:s3:::",{"Ref": target},"/*"]]}
+                        }
+                    ]
+                }
+            }
+        }
+    return policy_template
 
 def api(name=DEFAULT_NAME, description=None):
     description = description if description else "The ApiGateway API for " + name
@@ -149,7 +174,7 @@ def resource(path_part, parent_name, api_name):
     }
     return resource_template
 
-def method(function_name, resource, api_name, content_type="text/html", querystring_params={}, extra={}, integration_type=None):
+def method(function_name, resource, api_name, content_type="text/html", querystring_params={}, extra={}, integration_type=None, http_method="GET", enable_cors=False, model={}, redirect=None):
     RequestTemplate = {}
     RequestParameters = {}
     for url_param in querystring_params:
@@ -163,7 +188,7 @@ def method(function_name, resource, api_name, content_type="text/html", querystr
                 "Properties" : {
                     "ApiKeyRequired": false,
                     "AuthorizationType": "NONE",
-                    "HttpMethod": "GET",
+                    "HttpMethod": http_method,
                     "Integration": {
                         "CacheKeyParameters": [],
                         "Credentials":  { "Fn::GetAtt" : ["APIGWExecRole", "Arn"] },
@@ -180,9 +205,6 @@ def method(function_name, resource, api_name, content_type="text/html", querystr
                             }
                         ],
                         "PassthroughBehavior": "WHEN_NO_TEMPLATES",
-                        "RequestTemplates": {
-                            "application/json": rt_string
-                        },
                         "Type": "AWS",
                         "Uri":{ "Fn::Join" : [ "", [ "arn:aws:apigateway:", {"Ref" : "AWS::Region"}, ":lambda:path/2015-03-31/functions/", { "Fn::GetAtt" : [function_name, "Arn"] }, "/invocations" ] ] }
                     },
@@ -199,10 +221,18 @@ def method(function_name, resource, api_name, content_type="text/html", querystr
                     "RestApiId" : {"Ref": api_name}
                 }
             }
+#     if RequestTemplate:
+    method_template["Properties"]["Integration"]["RequestTemplates"] = {"application/json":rt_string}
+    if enable_cors:
+        method_template["Properties"]["Integration"]["IntegrationResponses"][0]["ResponseParameters"]["method.response.header.Access-Control-Allow-Origin"] = "'*'"
+        method_template["Properties"]["MethodResponses"][0]["ResponseParameters"]["method.response.header.Access-Control-Allow-Origin"] = "'*'"
     if integration_type and integration_type != "AWS" and integration_type in ["AWS","HTTP","AWS_PROXY","HTTP_PROXY","MOCK"]:
         method_template["Properties"]["Integration"]["Type"] = integration_type
         if integration_type == "AWS_PROXY":
             del method_template["Properties"]["Integration"]["IntegrationResponses"]
+    if model:
+        method_template["Properties"]["RequestModels"] = {}
+        method_template["Properties"]["RequestModels"]["application/json"] = model
     return method_template
 
 def deployment(api_name, stage_name, method_names, stage_description=None, deployment_description=None):
@@ -237,3 +267,109 @@ def stage(api_name, stage_name, deployment_id, stage_description=None):
             "StageName" : stage_name
         }
     }
+
+def model(api_name, model_name, model):
+    model_template = {
+        "Type" : "AWS::ApiGateway::Model",
+        "Properties" : {
+            "ContentType" : "application/json",
+            "Name" : model_name,
+            "RestApiId" : { "Ref": api_name},
+            "Schema" : model
+            }
+        }
+    model_template["Properties"]["Schema"]["$schema"] = "http://json-schema.org/draft-04/schema#"
+    model_template["Properties"]["Schema"]["title"] = model_name
+    return model_template
+
+def cors_enabling_method(resource, api_name):
+    return {
+        "Type": "AWS::ApiGateway::Method",
+            "Properties": {
+            "AuthorizationType": "NONE",
+            "RestApiId": {
+                "Ref": api_name
+                },
+            "ResourceId": resource,           
+            "HttpMethod": "OPTIONS",
+            "Integration": {
+                "IntegrationResponses": [
+                    {
+                        "StatusCode": 200,
+                        "ResponseParameters": {
+                            "method.response.header.Access-Control-Allow-Headers": "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'",
+                            "method.response.header.Access-Control-Allow-Methods": "'GET,POST,OPTIONS'",
+                            "method.response.header.Access-Control-Allow-Origin": "'*'"
+                            },
+                        "ResponseTemplates": {
+                            "application/json": ""
+                            }
+                        }
+                    ],
+                "PassthroughBehavior": "WHEN_NO_MATCH",
+                "RequestTemplates": {
+                    "application/json": "{\"statusCode\": 200}"
+                    },
+                "Type": "MOCK"
+                },
+            "MethodResponses": [
+                {
+                    "StatusCode": 200,
+                    "ResponseModels": {
+                        "application/json": "Empty"
+                        },
+                    "ResponseParameters": {
+                        "method.response.header.Access-Control-Allow-Headers": false,
+                        "method.response.header.Access-Control-Allow-Methods": false,
+                        "method.response.header.Access-Control-Allow-Origin": false
+                        }
+                    }
+                ]
+            }
+        }
+
+#     method_template = {
+#         "Type" : "AWS::ApiGateway::Method",
+#         "Properties" : {
+#             "ApiKeyRequired": false,
+#             "AuthorizationType": "NONE",
+#             "HttpMethod": "OPTIONS",
+#             "Integration": {
+#                 "IntegrationHttpMethod": "POST",
+#                 "IntegrationResponses": [
+#                     {
+#                         "ResponseParameters": {
+#                             "method.response.header.Access-Control-Allow-Headers": "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'",
+#                             "method.response.header.Access-Control-Allow-Methods": "'POST,OPTIONS'",
+#                             "method.response.header.Access-Control-Allow-Origin": "'*'"
+#                             },
+#                         "ResponseTemplates": {
+#                             "application/json": "$input.path('$')"
+#                             },
+#                         "StatusCode": "200"
+#                         }
+#                     ],
+#                 "PassthroughBehavior": "WHEN_NO_MATCH",
+#                 "RequestTemplates": {
+#                     "application/json": "{\"statusCode\": 200}"
+#                     },
+#                 "Type": "MOCK"
+#                 },
+#             "MethodResponses": [
+#                 {
+#                     "ResponseModels": {
+#                         "application/json": "Empty"
+#                         },
+#                     "ResponseParameters": {
+#                         "method.response.header.Access-Control-Allow-Headers": false,
+#                         "method.response.header.Access-Control-Allow-Methods": false,
+#                         "method.response.header.Access-Control-Allow-Origin": false
+#                         },
+#                     "StatusCode": "200"
+#                     }
+#                 ],
+#             "ResourceId" : resource,
+#             "RestApiId" : {"Ref": api_name}
+#             }
+#         }
+#     return method_template
