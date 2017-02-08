@@ -1,13 +1,34 @@
 #!/usr/bin/env python
 
 import json
+from canonicalize import *
 
 DEFAULT_NAME = "sunyata"
 false = False
 true = True
 null = None
 
-def bucket(name=None, website=False):
+def api_domain_mapping(domain, api_name, base_path="", stage="alpha", depends_on=None):
+    mapping_template = {
+        "Type" : "AWS::ApiGateway::BasePathMapping",
+        "Properties" : {
+            "BasePath" : base_path,
+            "DomainName" : domain,
+            "RestApiId" : {"Ref":api_name},
+            "Stage" : stage
+            }
+        }
+    if depends_on:
+        mapping_template["DependsOn"] = depends_on
+    return mapping_template
+
+def public_bucket_bundle(logical_name, bucket_name=None):
+    return {
+        canonical_bucket_name(logical_name):bucket(name=bucket_name, website=True),
+        canonical_bucket_policy_name(logical_name):public_bucket_policy(canonical_bucket_name(logical_name))
+        }
+
+def bucket(name=None, website=False, cors=False):
     bucket_template = {
         "Type" : "AWS::S3::Bucket",
         "Properties" : {}
@@ -17,6 +38,18 @@ def bucket(name=None, website=False):
     if website:
         bucket_template["Properties"]["WebsiteConfiguration"] = {
             "IndexDocument" : "index.html"
+            }
+    if cors:
+        bucket_template["Properties"]["CorsConfiguration"] = {
+            "CorsRules" : [
+                {
+                    "AllowedHeaders" : [ "*" ],
+                    "AllowedMethods" : [ "GET" ],
+                    "AllowedOrigins" : [ "https://*" ],
+                    "ExposedHeaders" : [ "x-amz-server-side-encryption","x-amz-request-id","x-amz-id-2" ],
+                    "MaxAge" : 3000
+                    }
+                ]
             }
     return bucket_template
 
@@ -77,7 +110,7 @@ def lambda_function(name, runtime, role, handler, description, timeout, memory, 
             "Environment" : {
                 "Variables" : {}
             },
-            "FunctionName" : name,
+            "FunctionName" : prefixAPI(name),
             "Handler" : handler,
             "MemorySize" : memory,
             "Role" : { "Fn::GetAtt" : [role, "Arn"] },
@@ -327,6 +360,8 @@ def cors_enabling_method(resource, api_name):
                 ]
             }
         }
+
+#def cloudwatch_cron()
 
 #     method_template = {
 #         "Type" : "AWS::ApiGateway::Method",
