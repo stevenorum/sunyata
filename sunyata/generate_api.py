@@ -189,7 +189,10 @@ class SunyataDeployer(object):
         self.stack_id = response["StackId"]
         status = "CREATE_IN_PROGRESS"
         while status.endswith("IN_PROGRESS"):
-            logging.info("Stack in state {status}.  Waiting 5 seconds.".format(status=status))
+            if status in ["CREATE_IN_PROGRESS", "UPDATE_IN_PROGRESS"]:
+                logging.debug("Stack in state {status}.  Waiting 5 seconds.".format(status=status))
+            else:
+                logging.info("Stack in state {status}.  Waiting 5 seconds.".format(status=status))
             time.sleep(5)
             status = self._get_stack()["StackStatus"]
 
@@ -278,8 +281,9 @@ class SunyataDeployer(object):
         config_path, config = self._get_config()
         real_keys = {}
         for function in self.api["lambdas"]:
-            key = canonicalize.canonical_s3_key(function["name"])
+            key = canonicalize.canonical_s3_key(file=function.get("file", None), directory=function.get("directory", None))
             if not key in real_keys:
+                logging.info("Uploading bundle {key}".format(key=key))
                 real_keys[key] = upload_lambda(function=function, bucket=bucket, key=key, config_path=config_path, config=config)
             else:
                 logging.info("Bundle {key} already uploaded.  Skipping.".format(key=key))
@@ -347,7 +351,7 @@ class SunyataDeployer(object):
             description = function["description"]
             timeout = function["timeout"]
             memory = function["memory"]
-            ckey = canonicalize.canonical_s3_key(function["name"])
+            ckey = canonicalize.canonical_s3_key(file=function.get("file", None), directory=function.get("directory", None))
             key = self.lambda_keys.get(ckey, ckey)
             self.cf_functions[cfname] = cfr.lambda_function(name, runtime, role, handler, description, timeout, memory, bucket, key)
             self.cf_permissions[canonicalize.canonical_permissions_name(function["name"])] = cfr.lambda_permission(cfname)

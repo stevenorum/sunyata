@@ -23,8 +23,8 @@ def strip(function):
     if type(function) == str or type(function) == unicode:
         return _strip(function)
     def stripper(*args, **kwargs):
-        _args = [_strip(arg) for arg in args]
-        _kwargs = {k:_strip(kwargs[k]) for k in kwargs}
+        _args = [_strip(arg) if arg else arg for arg in args]
+        _kwargs = {k:_strip(kwargs[k]) if kwargs[k] else kwargs[k] for k in kwargs}
         return function(*_args, **_kwargs)
     return stripper
 
