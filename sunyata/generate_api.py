@@ -97,10 +97,10 @@ class SunyataDeployer(object):
         self._upload_static_files()
         self._upload_lambda_code()
         self.generate()
-        for stage in stages:
-            self.remove_deployments_for_stage(stage)
-        self.combine()
-        self._update_stack()
+        # for stage in stages:
+        #     self.remove_deployments_for_stage(stage)
+        # self.combine()
+        # self._update_stack()
         self.generate()
         self.combine()
         self._update_stack()
@@ -210,9 +210,9 @@ class SunyataDeployer(object):
 #         if canonical_old_template == canonical_new_template:
 #             logging.info("No update necessary.")
 #             return
-        if self._same_resource_names(canonical_old_template, canonical_new_template):
-            logging.info("Highly likely (but not fully guaranteed) that no update is necessary.")
-            return
+        # if self._same_resource_names(canonical_old_template, canonical_new_template):
+        #     logging.info("Highly likely (but not fully guaranteed) that no update is necessary.")
+        #     return
         self.check_template(template_body)
 #         self._handle_manual_pre_transition_steps(old_template=canonical_old_template, new_template=canonical_new_template)
         response = cf.update_stack(
