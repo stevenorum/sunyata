@@ -24,23 +24,25 @@ class CLIDispatcher:
         }
 
     def create(self, **kwargs):
-        deployer = get_deployer(filename=kwargs["template"])
+        deployer = get_deployer(filenames=kwargs["templates"])
         deployer.deploy_initial()
         print(deployer.get_url())
 
     def deploy(self, **kwargs):
-        deployer = get_deployer(filename=kwargs["template"])
+        deployer = get_deployer(filenames=kwargs["templates"])
         deployer.redeploy_to_stages()
         print(deployer.get_url())
 
     def examine(self, **kwargs):
-        deployer = get_deployer(filename=kwargs["template"])
+        deployer = get_deployer(filenames=kwargs["templates"])
         body = deployer.get_template_from_config()
+        print(deployer.stack_name)
         print(body)
 
     def examine_deployed(self, **kwargs):
-        deployer = get_deployer(filename=kwargs["template"])
+        deployer = get_deployer(filenames=kwargs["templates"])
         body = deployer.get_template_from_cf()
+        print(deployer.stack_name)
         print(body)
 
     def get_argument_parser(self):
@@ -55,8 +57,8 @@ class CLIDispatcher:
             else:
                 operations.add_argument(operation_cli, action='store_true', help='Operation: {0}'.format(op['help']))
 
-        parser.add_argument('--template', required=True, help='Argument: The path to the sunyata template.')
-        parser.add_argument("-v", "--verbosity", action="count", default=0, help='Argument: Print random usually-useless information.  May or may not print anything depending on whether or not I\'ve implemented it yet, as I haven\'t right now.  Optional for all calls.  More repetitions equals more useless info, so -vv prints more than -v.')
+        parser.add_argument('--template', dest="templates", required=True, nargs='+', help='Argument: The path to the sunyata template.  If used multiple times, the templates will be read in order and merged.  (That is, if a value is defined in the first template and then redefined in the second, the value in the second template will be the one used.)')
+        parser.add_argument("-v", "--verbosity", dest="verbosity", action="count", default=0, help='Argument: Print random usually-useless information.  May or may not print anything depending on whether or not I\'ve implemented it yet, as I haven\'t right now.  Optional for all calls.  More repetitions equals more useless info, so -vv prints more than -v.')
 
         return parser
 

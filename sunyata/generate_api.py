@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import boto3
+from botocore.exceptions import ClientError
 from sunyata import canonicalize
 from sunyata import cfresources as cfr
 import datetime
@@ -24,11 +25,21 @@ def get_expanding_list(l, joiner=path_joiner):
         parent = joint
     return all_lists
 
-def get_deployer(filename):
+def load_template(filename):
     with open(filename,"r") as f:
         lines = f.readlines()
         api = "\n".join([l for l in lines if not l.startswith("#")])
-    return SunyataDeployer(api=json.loads(api))
+    return json.loads(api)
+
+def merge_templates(filenames):
+    configs = [load_template(fname) for fname in filenames]
+    merged_config = {}
+    for config in configs:
+        merged_config.update(config)
+    return merged_config
+
+def get_deployer(filenames):
+    return SunyataDeployer(api=merge_templates(filenames))
 
 def get_content_type(path):
     if path.endswith(".html"):
@@ -240,7 +251,10 @@ class SunyataDeployer(object):
         return None
 
     def get_logical_resource_from_cf(self, logical_name):
-        resources = boto3.client("cloudformation").describe_stack_resources(StackName=self.stack_name_or_id)["StackResources"]
+        try:
+            resources = boto3.client("cloudformation").describe_stack_resources(StackName=self.stack_name_or_id)["StackResources"]
+        except ClientError as e:
+            return None
         resources = [r for r in resources if r["LogicalResourceId"] == logical_name]
         if resources:
             return resources[0]
@@ -257,6 +271,8 @@ class SunyataDeployer(object):
 
     def _get_stack_output(self, key):
         stack = self._get_stack()
+        if not stack:
+            return None
         matching = [o["OutputValue"] for o in stack["Outputs"] if o["OutputKey"] == key]
         if matching:
             return matching[0]
