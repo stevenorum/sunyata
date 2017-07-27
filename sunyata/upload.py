@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 import boto3
 import datetime
@@ -65,7 +65,7 @@ def zip_directory(dirname, config_path=None, config=None):
             raise RuntimeError("Requested config path {config_path} conflicts with a user-provided source file.".format(config_path=config_path))
         # Dump the config in as compressed a form as possible.
         zipf.writestr(config_path, json.dumps(config, separators=(',',':')))
-        zipf.getinfo(config_path).external_attr = 0777 << 16L
+        zipf.getinfo(config_path).external_attr = 0o777 << 16
     zipf.close()
     return io.BytesIO(file_like_object.getvalue())
 
@@ -88,7 +88,8 @@ def upload_static(bucket, directory):
         for filename in files:
             path_on_disk = os.path.join(root, filename)
             path_in_bucket = strip_prepath(path_on_disk, directory)
-            with open(path_on_disk, "r") as f:
+            logging.debug("Uploading static file {fname}".format(fname=path_on_disk))
+            with open(path_on_disk, "rb") as f:
                 body = f.read()
             if not upload_body(bucket=bucket, key=path_in_bucket, body=body):
                 logging.debug("File at {path_on_disk} already uploaded to {bucket}/{key}".format(path_on_disk=path_on_disk, bucket=bucket, key=path_in_bucket))

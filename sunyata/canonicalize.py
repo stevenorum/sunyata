@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 import json
 import string
@@ -20,7 +20,7 @@ def strip_for_path(s):
     return s.replace(":","").replace("-","")
 
 def strip(function):
-    if type(function) == str or type(function) == unicode:
+    if type(function) == str:
         return _strip(function)
     def stripper(*args, **kwargs):
         _args = [_strip(arg) if arg else arg for arg in args]
@@ -35,7 +35,7 @@ def _prefixAPI(s):
         return s
 
 def prefixAPI(function):
-    if type(function) == str or type(function) == unicode:
+    if type(function) == str:
         return _prefixAPI(function)
     def prefixer(*args, **kwargs):
         return _prefixAPI(function(*args, **kwargs))

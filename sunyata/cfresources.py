@@ -1,7 +1,7 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 import json
-from canonicalize import *
+from sunyata.canonicalize import *
 
 DEFAULT_NAME = "sunyata"
 false = False
