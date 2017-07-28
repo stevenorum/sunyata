@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
+import json
 import logging
 from sunyata.generate_api import get_deployer
 
@@ -20,6 +21,10 @@ class CLIDispatcher:
             },
         'examine_deployed':{
             'help':'Print the CF template currently in use by this stack.'
+            },
+        'print_api_template':{
+            'help':'Print the API configuration tha\'s the result of processing the template arguments you\'ve provided.',
+            'initial':'p'
             }
         }
 
@@ -44,6 +49,11 @@ class CLIDispatcher:
         body = deployer.get_template_from_cf()
         print(deployer.stack_name)
         print(body)
+
+    def print_api_template(self, **kwargs):
+        deployer = get_deployer(filenames=kwargs["templates"])
+        body = deployer.get_template_from_cf()
+        print(json.dumps(deployer.api, indent=2, sort_keys=True))
 
     def get_argument_parser(self):
         parser = argparse.ArgumentParser(description='Interact with sunyata from the command line.')

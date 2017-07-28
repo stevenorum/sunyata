@@ -28,8 +28,15 @@ def get_expanding_list(l, joiner=path_joiner):
 def load_template(filename):
     with open(filename,"r") as f:
         lines = f.readlines()
-        api = "\n".join([l for l in lines if not l.startswith("#")])
-    return json.loads(api)
+        template = json.loads("\n".join([l for l in lines if not l.startswith("#")]))
+        pass
+    configuration = {}
+    for fname in template.get("inherits_from", []):
+        fpath = os.path.join(os.path.dirname(filename), fname)
+        configuration.update(load_template(fpath))
+        pass
+    configuration.update(template)
+    return configuration
 
 def merge_templates(filenames):
     configs = [load_template(fname) for fname in filenames]
@@ -63,6 +70,7 @@ class SunyataDeployer(object):
 
     def __init__(self, api, stack_name=None):
         self.api = api
+        self.stage_config = self.api.get("stage_config", {})
         self.stack_name = stack_name if stack_name else "sunyata-{name}".format(name=self.api["name"])
         canonicalize.set_api(self.api["name"])
         self.stack_id = None
@@ -285,7 +293,8 @@ class SunyataDeployer(object):
         configuration["static_file_url"] = self.static_s3_path
         configuration["static_file_list"] = self.static_files
         configuration["static_file_bucket"] = self.static_bucket_name
-        configuration["base_url"] = self.api.get("domain_name", self.get_url())
+        configuration["base_url"] = self.get_url()
+        configuration.update(self.stage_config)
         return self.api["config_path"], configuration
 
     def _upload_static_files(self):
