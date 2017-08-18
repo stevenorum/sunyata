@@ -82,7 +82,9 @@ class SunyataDeployer(object):
         self.lambda_keys = {}
         self.static_files = []
         self.domain = self.api.get("domain_name", None)
-        boto3.setup_default_session(region_name=self.api.get("region", "us-east-1"), profile_name=self.api.get("profile", "default"))
+        self.extra_cf_templates = self.api.get("extra_cloudformation_templates", [])
+        self.region = self.api.get("region", "us-east-1")
+        boto3.setup_default_session(region_name=self.region, profile_name=self.api.get("profile", "default"))
 
     ##### begin externally-used methods #####
 
@@ -294,6 +296,8 @@ class SunyataDeployer(object):
         configuration["static_file_list"] = self.static_files
         configuration["static_file_bucket"] = self.static_bucket_name
         configuration["base_url"] = self.get_url()
+        configuration["aws_account_id"] = boto3.client('sts').get_caller_identity().get('Account')
+        configuration["aws_region"] = self.region
         configuration.update(self.stage_config)
         return self.api["config_path"], configuration
 
@@ -377,9 +381,10 @@ class SunyataDeployer(object):
             description = function["description"]
             timeout = function["timeout"]
             memory = function["memory"]
+            vpc_config = function.get("vpc_config", None)
             ckey = canonicalize.canonical_s3_key(file=function.get("file", None), directory=function.get("directory", None))
             key = self.lambda_keys.get(ckey, ckey)
-            self.cf_functions[cfname] = cfr.lambda_function(name, runtime, role, handler, description, timeout, memory, bucket, key)
+            self.cf_functions[cfname] = cfr.lambda_function(name, runtime, role, handler, description, timeout, memory, bucket, key, vpc_config=vpc_config)
             self.cf_permissions[canonicalize.canonical_permissions_name(function["name"])] = cfr.lambda_permission(cfname)
         if self.api.get("stages", None):
             self.cf_roles["APIGWExecRole"] = cfr.apigateway_role(function_arns)
@@ -476,6 +481,11 @@ class SunyataDeployer(object):
         self.resources.update(self.cf_functions)
         self.resources.update(self.cf_roles)
         self.resources.update(self.cf_infra)
+        for extra_template in self.extra_cf_templates:
+            with open(extra_template, 'r') as f:
+                template = json.load(f)
+                # TODO: add support for parameters and outputs.
+                self.resources.update(template["Resources"])
         self.template = cfr.overall_template(
             resources=self.resources,
             outputs=self.cf_outputs,

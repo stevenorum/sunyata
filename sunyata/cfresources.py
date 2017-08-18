@@ -98,7 +98,7 @@ def lambda_permission(cfname):
     }
     return permission_template
 
-def lambda_function(name, runtime, role, handler, description, timeout, memory, bucket, key):
+def lambda_function(name, runtime, role, handler, description, timeout, memory, bucket, key, vpc_config=None):
     function_template = {
         "Type" : "AWS::Lambda::Function",
         "Properties" : {
@@ -118,6 +118,8 @@ def lambda_function(name, runtime, role, handler, description, timeout, memory, 
             "Timeout" : timeout
         }
     }
+    if vpc_config:
+        function_template["Properties"]["VpcConfig"] = vpc_config
     return function_template
 
 def apigateway_role(function_arns):
