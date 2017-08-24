@@ -283,7 +283,7 @@ class SunyataDeployer(object):
         stack = self._get_stack()
         if not stack:
             return None
-        matching = [o["OutputValue"] for o in stack["Outputs"] if o["OutputKey"] == key]
+        matching = [o["OutputValue"] for o in stack.get("Outputs", []) if o["OutputKey"] == key]
         if matching:
             return matching[0]
         return None
@@ -298,6 +298,7 @@ class SunyataDeployer(object):
         configuration["base_url"] = self.get_url()
         configuration["aws_account_id"] = boto3.client('sts').get_caller_identity().get('Account')
         configuration["aws_region"] = self.region
+        configuration["stack_name"] = self.stack_name
         configuration.update(self.stage_config)
         return self.api["config_path"], configuration
 
