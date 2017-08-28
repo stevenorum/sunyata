@@ -9,7 +9,63 @@ import json
 import logging
 import os
 import time
+import traceback
 from sunyata.upload import upload_lambda, upload_static
+
+def add_line_numbers(lines, start, width):
+    added_lines = []
+    for i in range(len(lines)):
+        lno = i + start
+        added_lines.append(str(lno).zfill(width) + ": " + lines[i])
+    return added_lines
+
+def print_json_error(exc, context_lines=5):
+    if hasattr(exc, "lineno") and hasattr(exc, "colno") and hasattr(exc, "doc"):
+        template = exc.doc
+        lines = template.split("\n")
+        max_line_number = len(lines)
+        max_line_length = max(*[len(l) for l in lines])
+        max_line_number_length = len(str(max_line_number))
+        added_width = max_line_number_length + 2
+
+        line_number = exc.lineno - 1 # it's 1-indexed
+        column_number = exc.colno
+        preceding_line_start = max(0, line_number - context_lines)
+        following_line_end = min(max_line_number, line_number + context_lines + 1)
+        exc_message = str(exc)
+        line_length = max(*[len(l) for l in lines[preceding_line_start:following_line_end]]) + added_width
+        line_length = max(len(exc_message), line_length)
+        preceding_block = "\n".join(add_line_numbers(lines[preceding_line_start:line_number], preceding_line_start, max_line_number_length))
+        problematic_line = add_line_numbers([lines[line_number]], line_number, max_line_number_length)[0]
+        following_block = "\n".join(add_line_numbers(lines[line_number+1:following_line_end], line_number+1, max_line_number_length))
+        pointer_format = "-"*(max(0, column_number + added_width - 1)) + "{pointer}" + "-"*(line_length - column_number - added_width)
+        separator_line = "="*line_length
+        error_lines = []
+        error_lines.append(separator_line)
+        error_lines.append(exc_message)
+        error_lines.append(separator_line)
+        error_lines.append(preceding_block)
+        error_lines.append(pointer_format.format(pointer="v"))
+        error_lines.append(problematic_line)
+        error_lines.append(pointer_format.format(pointer="^"))
+        error_lines.append(following_block)
+        error_lines.append(separator_line)
+        print("\n".join(error_lines))
+
+def json_load(*args, **kwargs):
+    try:
+        return json.load(*args, **kwargs)
+    except json.decoder.JSONDecodeError as e:
+        traceback.print_exc()
+        print_json_error(e)
+        raise e
+
+def json_loads(*args, **kwargs):
+    try:
+        return json.loads(*args, **kwargs)
+    except json.decoder.JSONDecodeError as e:
+        print_json_error(e)
+        raise e
 
 def path_joiner(parent, child):
     if not parent:
@@ -28,7 +84,9 @@ def get_expanding_list(l, joiner=path_joiner):
 def load_template(filename):
     with open(filename,"r") as f:
         lines = f.readlines()
-        template = json.loads("\n".join([l for l in lines if not l.startswith("#")]))
+        real_lines = [l for l in lines if l and not (l.strip().startswith("#") or l.strip().startswith("//"))]
+        stripped_template = "\n".join(real_lines)
+        template = json_loads(stripped_template)
         pass
     configuration = {}
     for fname in template.get("inherits_from", []):
@@ -84,6 +142,8 @@ class SunyataDeployer(object):
         self.domain = self.api.get("domain_name", None)
         self.extra_cf_templates = self.api.get("extra_cloudformation_templates", [])
         self.region = self.api.get("region", "us-east-1")
+        self.existing_template = None
+        self.calls_to_make = []
         boto3.setup_default_session(region_name=self.region, profile_name=self.api.get("profile", "default"))
 
     ##### begin externally-used methods #####
@@ -111,21 +171,25 @@ class SunyataDeployer(object):
         self.combine()
         self._update_stack()
 
-    def redeploy_to_stages(self, stages=None):
+    def redeploy_to_stages(self, stages=None, full_redeploy=False):
         if not self._get_stack():
             raise RuntimeError("Stack doesn't exist!")
+        self.existing_template = self._get_template_body_from_cf()
         stages = self.api["stages"] if stages==None else stages
         self._upload_static_files()
         self._upload_lambda_code()
-        self.generate()
-        # for stage in stages:
-        #     self.remove_deployments_for_stage(stage)
-        # self.combine()
-        # self._update_stack()
+        if full_redeploy:
+            self.generate()
+            for stage in stages:
+                self.remove_deployments_for_stage(stage)
+            self.combine()
+            self._update_stack()
+            self._make_raw_calls()
         self.generate()
         self.combine()
         self._update_stack()
-
+        self._make_raw_calls()
+        
     def get_template_from_config(self):
         self.generate()
         self.combine()
@@ -194,6 +258,30 @@ class SunyataDeployer(object):
             if resource not in new_resources and old_resources[resource]["Type"] in resources_cf_fucks_up:
                 self._delete_resource(old_resources[resource])
 
+    def _fill_in_placeholder_params(self, params):
+        if isinstance(params, dict):
+            if len(params) == 1 and "OUTPUT" in params:
+                return self._get_stack_output(params["OUTPUT"])
+            else:
+                return {k:self._fill_in_placeholder_params(params[k]) for k in params}
+        elif isinstance(params, list):
+            return [self._fill_in_placeholder_params(e) for e in params]
+        return params
+                
+    def _make_raw_calls(self):
+        for call in self.calls_to_make:
+            service = call["service"]
+            client = boto3.client(service)
+            method_name = call["method"]
+            method = getattr(client, method_name)
+            params = self._fill_in_placeholder_params(call["params"])
+            print("Service: {}".format(service))
+            print("Method: {}".format(method_name))
+            print("Params: {}".format(params))
+            response = method(**params)
+            print("Response: {}".format(response))
+        self.calls_to_make = []
+                
     def _create_stack(self):
         stack = self._get_stack()
         if stack and stack["StackStatus"] != "DELETE_COMPLETE":
@@ -404,6 +492,8 @@ class SunyataDeployer(object):
         for path in paths:
             pathobj = dict(path)
             pathobj["raw_resource"] = path["path"]
+            pathobj["content_handling"] = path.get("content_handling", None)
+            pathobj["content_type"] = path.get("content_type", get_content_type(path["path"]))
             pathobj["resource"] = canonicalize.canonical_resource_name(path["path"])
             pathobj["name"] = canonicalize.canonical_method_name(pathobj["function"], pathobj["resource"], pathobj.get("http_method","GET"))
             all_elements = get_expanding_list(pathobj["path"].split("/"))
@@ -420,7 +510,7 @@ class SunyataDeployer(object):
             method = methodmap[name]
             function_name = canonicalize.canonical_function_name(method["function"])
             resource = self.get_resource_id_for_template(method["resource"])
-            content_type = get_content_type(method["raw_resource"])
+            content_type = method["content_type"]
             proxy = self.lambda_functions[function_name].get("proxy", False)
             integration_type = "AWS_PROXY" if proxy else "AWS"
             http_method = method.get("http_method","GET")
@@ -436,6 +526,42 @@ class SunyataDeployer(object):
                 http_method=http_method,
                 enable_cors=enable_cors,
                 model=canonicalize.canonical_model_name(method.get("model")) if method.get("model", None) else None
+                )
+            if method["content_handling"]:
+                self.cf_outputs["RestApiId"] = {"Value" : {"Ref": self.api_name}}
+                self.cf_outputs[function_name + "URI"] = {"Value" : { "Fn::Join" : [ "", [ "arn:aws:apigateway:", {"Ref" : "AWS::Region"}, ":lambda:path/2015-03-31/functions/", { "Fn::GetAtt" : [function_name, "Arn"] }, "/invocations" ] ] } }
+                self.cf_outputs["APIGWExecRole"] = {"Value" : { "Fn::GetAtt" : ["APIGWExecRole", "Arn"] } }
+                self.cf_outputs[method["resource"]] = {"Value" : {"Ref":method["resource"]}}
+                properties = self.cf_methods[name]["Properties"]
+                integration = properties["Integration"]
+                self.calls_to_make.append(
+                    {
+                        "service":"apigateway",
+                        "method":"delete_integration",
+                        "params":{
+                            "restApiId":{"OUTPUT":"RestApiId"},
+                            "resourceId":{"OUTPUT":method["resource"]},
+                            "httpMethod":properties["HttpMethod"]
+                        }
+                    }
+                )
+                self.calls_to_make.append(
+                    {
+                        "service":"apigateway",
+                        "method":"put_integration",
+                        "params":{
+                            "restApiId":{"OUTPUT":"RestApiId"},
+                            "resourceId":{"OUTPUT":method["resource"]},
+                            "httpMethod":properties["HttpMethod"],
+                            "type":integration["Type"],
+                            "integrationHttpMethod":integration["IntegrationHttpMethod"],
+                            "uri":{"OUTPUT":function_name + "URI"},
+                            "credentials":{"OUTPUT":"APIGWExecRole"},
+                            "requestParameters":properties["RequestParameters"],
+                            "passthroughBehavior":integration["PassthroughBehavior"],
+                            "contentHandling":method["content_handling"]
+                        }
+                    }
                 )
             if enable_cors:
                 self.cf_methods[name + "cors"] = cfr.cors_enabling_method(resource=resource, api_name=self.api_name)

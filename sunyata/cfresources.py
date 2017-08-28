@@ -74,13 +74,14 @@ def public_bucket_policy(target, name=None):
         }
     return policy_template
 
-def api(name=DEFAULT_NAME, description=None):
+def api(name=DEFAULT_NAME, description=None, binary_media_types=["image/jpg","text/html"]):
     description = description if description else "The ApiGateway API for " + name
     api_template = {
         "Type" : "AWS::ApiGateway::RestApi",
         "Properties" : {
             "Description" : description,
             "Name" : name,
+            # "BinaryMediaTypes": binary_media_types,
             "Parameters" : {}
         }
     }
@@ -209,7 +210,7 @@ def resource(path_part, parent_name, api_name):
     }
     return resource_template
 
-def method(function_name, resource, api_name, content_type="text/html", querystring_params={}, extra={}, integration_type=None, http_method="GET", enable_cors=False, model={}, redirect=None):
+def method(function_name, resource, api_name, content_type="text/html", querystring_params={}, extra={}, integration_type=None, http_method="GET", enable_cors=False, model={}, redirect=None, content_handling=None):
     RequestTemplate = {}
     RequestParameters = {}
     for url_param in querystring_params:
@@ -219,43 +220,43 @@ def method(function_name, resource, api_name, content_type="text/html", querystr
     RequestTemplate.update(extra)
     rt_string = json.dumps(json.dumps(RequestTemplate,separators=(',',':')))
     method_template = {
-                "Type" : "AWS::ApiGateway::Method",
-                "Properties" : {
-                    "ApiKeyRequired": false,
-                    "AuthorizationType": "NONE",
-                    "HttpMethod": http_method,
-                    "Integration": {
-                        "CacheKeyParameters": [],
-                        "Credentials":  { "Fn::GetAtt" : ["APIGWExecRole", "Arn"] },
-                        "IntegrationHttpMethod": "POST",
-                        "IntegrationResponses": [
-                            {
-                                "ResponseParameters": {
-                                    "method.response.header.Content-Type": "'" + content_type + "'"
-                                },
-                                "ResponseTemplates": {
-                                    content_type: "$input.path('$')"
-                                },
-                                "StatusCode": "200"
-                            }
-                        ],
-                        "PassthroughBehavior": "WHEN_NO_TEMPLATES",
-                        "Type": "AWS",
-                        "Uri":{ "Fn::Join" : [ "", [ "arn:aws:apigateway:", {"Ref" : "AWS::Region"}, ":lambda:path/2015-03-31/functions/", { "Fn::GetAtt" : [function_name, "Arn"] }, "/invocations" ] ] }
+        "Type" : "AWS::ApiGateway::Method",
+        "Properties" : {
+            "ApiKeyRequired": false,
+            "AuthorizationType": "NONE",
+            "HttpMethod": http_method,
+            "Integration": {
+                "CacheKeyParameters": [],
+                "Credentials":  { "Fn::GetAtt" : ["APIGWExecRole", "Arn"] },
+                "IntegrationHttpMethod": "POST",
+                "IntegrationResponses": [
+                    {
+                        "ResponseParameters": {
+                            "method.response.header.Content-Type": "'" + content_type + "'"
+                        },
+                        "ResponseTemplates": {
+                            content_type: "$input.path('$')"
+                        },
+                        "StatusCode": "200"
+                    }
+                ],
+                "PassthroughBehavior": "WHEN_NO_TEMPLATES",
+                "Type": "AWS",
+                "Uri":{ "Fn::Join" : [ "", [ "arn:aws:apigateway:", {"Ref" : "AWS::Region"}, ":lambda:path/2015-03-31/functions/", { "Fn::GetAtt" : [function_name, "Arn"] }, "/invocations" ] ] }
+            },
+            "MethodResponses": [
+                {
+                    "ResponseParameters": {
+                        "method.response.header.Content-Type": false
                     },
-                    "MethodResponses": [
-                        {
-                            "ResponseParameters": {
-                                "method.response.header.Content-Type": false
-                            },
-                            "StatusCode": "200"
-                        }
-                    ],
-                    "RequestParameters": RequestParameters,
-                    "ResourceId" : resource,
-                    "RestApiId" : {"Ref": api_name}
+                    "StatusCode": "200"
                 }
-            }
+            ],
+            "RequestParameters": RequestParameters,
+            "ResourceId" : resource,
+            "RestApiId" : {"Ref": api_name}
+        }
+    }
 #     if RequestTemplate:
     method_template["Properties"]["Integration"]["RequestTemplates"] = {"application/json":rt_string}
     if enable_cors:
@@ -268,6 +269,8 @@ def method(function_name, resource, api_name, content_type="text/html", querystr
     if model:
         method_template["Properties"]["RequestModels"] = {}
         method_template["Properties"]["RequestModels"]["application/json"] = model
+    if content_handling:
+        method_template["Properties"]["Integration"]["ContentHandling"] = content_handling
     return method_template
 
 def deployment(api_name, stage_name, method_names, stage_description=None, deployment_description=None):
