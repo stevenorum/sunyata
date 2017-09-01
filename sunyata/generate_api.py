@@ -97,6 +97,7 @@ def load_template(filename):
     return configuration
 
 def merge_templates(filenames):
+    filenames = [filenames] if isinstance(filenames, str) else filenames
     configs = [load_template(fname) for fname in filenames]
     merged_config = {}
     for config in configs:
